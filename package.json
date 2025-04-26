@@ -1,0 +1,43 @@
+{
+  "name": "eternity-stream-tracker",
+  "version": "1.0.0",
+  "description": "Discord bot for tracking and managing streaming activity in Discord servers",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "lint": "echo \"No linting configured\"",
+    "test": "echo \"No tests specified\""
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "discord.js",
+    "streaming",
+    "tracker",
+    "twitch",
+    "youtube"
+  ],
+  "author": "Gurkirat Khaira <https://github.com/Gurkirat-Khaira>",
+  "license": "CC-BY-NC-4.0",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gurkirat-Khaira/ETERNITY-Bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Gurkirat-Khaira/ETERNITY-Bot/issues"
+  },
+  "homepage": "https://github.com/Gurkirat-Khaira/ETERNITY-Bot#readme",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "mongoose": "^8.12.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}
