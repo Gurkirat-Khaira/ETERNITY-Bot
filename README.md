@@ -1,10 +1,10 @@
 # ETERNITY Stream Tracker
 
-A Discord bot for tracking and managing streaming activity in Discord servers. This bot allows server owners to set up automatic notifications when members go live on platforms like Twitch, YouTube, etc., track streaming statistics, and manage streaming-related configurations.
+A Discord bot for tracking and managing Discord streaming activity in servers. This bot allows server owners to set up automatic notifications when members go live using Discord's built-in streaming feature, track streaming statistics, and manage streaming-related configurations.
 
 ## Features
 
-- **Stream Notifications**: Automatic notifications when members start streaming
+- **Stream Notifications**: Automatic notifications when members start Discord streaming
 - **Stream Tracking**: Records stream duration and other statistics
 - **Leaderboards**: View top streamers in your server
 - **Statistics**: Check individual and server-wide streaming statistics
@@ -58,6 +58,16 @@ A Discord bot for tracking and managing streaming activity in Discord servers. T
 - `!setprefix <prefix>` - Change the command prefix for your server
 - `!setnoti <channel>` - Set the notification channel for stream alerts
 - `!reload` - Reload bot commands (admin only)
+
+## How It Works
+
+ETERNITY Stream Tracker detects when users in your server start or stop streaming through Discord's built-in "Go Live" feature. It doesn't integrate with external streaming platforms like Twitch or YouTube - it only tracks streams happening directly within Discord.
+
+When a member goes live in a voice channel, the bot will:
+1. Send a notification to the designated channel
+2. Track the stream's duration
+3. Update the user's streaming statistics
+4. Detect if a stream was interrupted (by crashes or disconnects)
 
 ## Contributing
 
