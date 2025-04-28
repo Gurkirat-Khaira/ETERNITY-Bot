@@ -10,6 +10,8 @@ A Discord bot for tracking and managing Discord streaming activity in servers. T
 - **Statistics**: Check individual and server-wide streaming statistics
 - **Customizable Prefix**: Set a custom command prefix for your server
 - **Notification Control**: Configure where and how notifications appear
+- **Automated Reports**: Receive hourly and daily summaries of streaming activity in your server
+- **Timezone Support**: Configure reports based on your server's timezone
 
 ## Installation
 
@@ -57,6 +59,7 @@ A Discord bot for tracking and managing Discord streaming activity in servers. T
 - `!history [user]` - View recent streaming history
 - `!setprefix <prefix>` - Change the command prefix for your server
 - `!setnoti <channel>` - Set the notification channel for stream alerts
+- `!setreport` - Configure scheduled stream reports and timezone settings
 - `!reload` - Reload bot commands (admin only)
 
 ## How It Works
@@ -68,6 +71,16 @@ When a member goes live in a voice channel, the bot will:
 2. Track the stream's duration
 3. Update the user's streaming statistics
 4. Detect if a stream was interrupted (by crashes or disconnects)
+
+### Automated Reports System
+
+The bot includes a comprehensive reporting system that automatically delivers insights about your server's streaming activity:
+
+- **Hourly Reports**: Provides a summary of all streams that occurred in the past hour
+- **Daily Reports**: Sends a daily digest of all streaming activity at midnight in your configured timezone
+- **Timezone Configuration**: Set your server's timezone for more relevant report timing
+- **Rich Visualizations**: Reports include usernames, channels, durations, and other details
+- **Pagination Support**: For servers with high streaming activity, reports are paginated for better readability
 
 ## Contributing
 

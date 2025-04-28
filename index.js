@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Partials, Events, Collection, EmbedBuilder, A
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+const cron = require('node-cron');
 require('dotenv').config();
 
 // Import database connection
@@ -24,6 +25,9 @@ const {
   getNotificationChannel,
   isStreamTrackingEnabled
 } = require('./utils/configUtils');
+
+// Import report utility
+const { generateHourlyReport, generateDailyReport } = require('./utils/reportUtils');
 
 // Import rate limiting utility
 const { checkCommandLimit, getDefaultCooldown } = require('./utils/rateLimit');
@@ -367,6 +371,9 @@ client.once(Events.ClientReady, async () => {
 
     // Check for any active streams from previous session and handle them
     await checkPreviousSessionStreams();
+    
+    // Set up scheduled reports
+    setupScheduledReports();
   } catch (error) {
     // Always show critical errors in the console
     console.error(`❌ Error during startup: ${error.message}`);
@@ -886,6 +893,127 @@ process.on('SIGTERM', async () => {
   console.log('\nReceived SIGTERM. Shutting down gracefully...');
   await performGracefulShutdown();
 });
+
+/**
+ * Set up scheduled reports for all guilds
+ */
+function setupScheduledReports() {
+  logger.info('Setting up scheduled stream reports');
+  
+  // Hourly report scheduler - runs at the start of every hour
+  cron.schedule('0 * * * *', async () => {
+    logger.info('Running hourly report task');
+    await sendScheduledReports('hourly');
+  });
+  
+  // Daily report scheduler - runs at midnight
+  cron.schedule('0 0 * * *', async () => {
+    logger.info('Running daily report task');
+    await sendScheduledReports('daily');
+  });
+  
+  logger.info('Scheduled report tasks set up successfully');
+}
+
+/**
+ * Send scheduled reports to all guilds that have enabled them
+ * @param {string} reportType - Type of report ('hourly' or 'daily')
+ */
+async function sendScheduledReports(reportType) {
+  try {
+    const GuildConfig = require('./models/GuildConfig');
+    
+    // Find guilds with appropriate report type enabled
+    const query = { 
+      notificationChannelId: { $ne: null }
+    };
+    
+    // Add type-specific condition
+    if (reportType === 'hourly') {
+      query.hourlyReportEnabled = true;
+    } else if (reportType === 'daily') {
+      query.dailyReportEnabled = true;
+    }
+    
+    const guilds = await GuildConfig.find(query);
+    
+    logger.info(`Sending ${reportType} reports to ${guilds.length} guilds`);
+    
+    for (const guildConfig of guilds) {
+      if (reportType === 'hourly') {
+        await sendHourlyReportToGuild(guildConfig);
+      } else if (reportType === 'daily') {
+        await sendDailyReportToGuild(guildConfig);
+      }
+    }
+  } catch (error) {
+    logger.error(`Error sending ${reportType} reports`, { error: error.message, stack: error.stack });
+  }
+}
+
+/**
+ * Send hourly report to a specific guild
+ * @param {Object} guildConfig - Guild configuration object
+ */
+async function sendHourlyReportToGuild(guildConfig) {
+  try {
+    const guild = client.guilds.cache.get(guildConfig.guildId);
+    if (!guild) {
+      logger.warn(`Guild not found for hourly report: ${guildConfig.guildId}`);
+      return;
+    }
+    
+    const channel = guild.channels.cache.get(guildConfig.notificationChannelId);
+    if (!channel) {
+      logger.warn(`Notification channel not found for hourly report in guild ${guild.name}`);
+      return;
+    }
+    
+    logger.info(`Sending hourly report to ${guild.name}`);
+    
+    const reportEmbeds = await generateHourlyReport(guildConfig.guildId);
+    await channel.send({ embeds: reportEmbeds });
+    
+    logger.info(`Hourly report sent to ${guild.name}`);
+  } catch (error) {
+    logger.error(`Error sending hourly report to guild ${guildConfig.guildId}`, {
+      error: error.message,
+      stack: error.stack
+    });
+  }
+}
+
+/**
+ * Send daily report to a specific guild
+ * @param {Object} guildConfig - Guild configuration object
+ */
+async function sendDailyReportToGuild(guildConfig) {
+  try {
+    const guild = client.guilds.cache.get(guildConfig.guildId);
+    if (!guild) {
+      logger.warn(`Guild not found for daily report: ${guildConfig.guildId}`);
+      return;
+    }
+    
+    const channel = guild.channels.cache.get(guildConfig.notificationChannelId);
+    if (!channel) {
+      logger.warn(`Notification channel not found for daily report in guild ${guild.name}`);
+      return;
+    }
+    
+    logger.info(`Sending daily report to ${guild.name}`);
+    
+    const reportEmbeds = await generateDailyReport(guildConfig.guildId);
+    await channel.send({ embeds: reportEmbeds });
+    
+    logger.info(`Daily report sent to ${guild.name}`);
+  } catch (error) {
+    logger.error(`Error sending daily report to guild ${guildConfig.guildId}`, {
+      error: error.message,
+      stack: error.stack
+    });
+  }
+}
 
 // Login to Discord with your token
 client.login(process.env.DISCORD_TOKEN)

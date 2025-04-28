@@ -263,7 +263,7 @@ function formatTime(minutes) {
 /**
  * Format stream duration for display with interrupted status
  * 
- * @param {number} duration - Duration in minutes
+ * @param {number} duration - Duration in seconds
  * @param {boolean} interrupted - Whether the stream was interrupted
  * @returns {string} - Formatted duration string
  */
@@ -271,7 +271,10 @@ function formatDuration(duration, interrupted = false) {
   if (interrupted) {
     return 'Interrupted';
   }
-  return formatTime(duration);
+  
+  // Convert seconds to minutes for formatTime
+  const minutes = duration / 60;
+  return formatTime(minutes);
 }
 
 /**

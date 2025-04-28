@@ -81,7 +81,7 @@ module.exports = {
       // Categorize commands
       if (['stats', 'leaderboard', 'history'].includes(name)) {
         streamCommands.push(`\`${name}\` - ${description}`);
-      } else if (['setprefix', 'setnoti', 'reload'].includes(name)) {
+      } else if (['setprefix', 'setnoti', 'reload', 'setreport'].includes(name)) {
         configCommands.push(`\`${name}\` - ${description}`);
       } else {
         otherCommands.push(`\`${name}\` - ${description}`);
@@ -187,7 +187,7 @@ module.exports = {
       // Categorize commands
       if (['stats', 'leaderboard', 'history'].includes(name)) {
         streamCommands.push(`\`${name}\` - ${description}`);
-      } else if (['setprefix', 'setnoti', 'reload'].includes(name)) {
+      } else if (['setprefix', 'setnoti', 'reload', 'setreport'].includes(name)) {
         configCommands.push(`\`${name}\` - ${description}`);
       } else {
         otherCommands.push(`\`${name}\` - ${description}`);

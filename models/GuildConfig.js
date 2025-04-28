@@ -1,6 +1,6 @@
-const mongoose = require('mongoose');
+const { Schema, model } = require('mongoose');
 
-const guildConfigSchema = new mongoose.Schema({
+const GuildConfigSchema = new Schema({
   guildId: {
     type: String,
     required: true,
@@ -26,7 +26,11 @@ const guildConfigSchema = new mongoose.Schema({
   lastUpdated: {
     type: Date,
     default: Date.now
-  }
+  },
+  // Report settings
+  hourlyReportEnabled: { type: Boolean, default: false },
+  dailyReportEnabled: { type: Boolean, default: false },
+  timezone: { type: String, default: 'UTC' } // Timezone for reports
 });
 
-module.exports = mongoose.model('GuildConfig', guildConfigSchema); 
+module.exports = model('GuildConfig', GuildConfigSchema); 
