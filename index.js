@@ -756,16 +756,22 @@ client.on(Events.GuildCreate, async guild => {
       if (systemChannel && systemChannel.permissionsFor(guild.members.me).has('SendMessages')) {
         const embed = new EmbedBuilder()
           .setColor('#0099ff')
-          .setTitle('Thanks for adding Stream Tracker Bot!')
+          .setTitle('Thanks for adding ETERNITY Stream Tracker!')
           .setDescription(`
-            I track streaming activity in voice channels and provide detailed stats.
+            I track Discord streaming activity in voice channels and provide detailed statistics.
             
             **Getting Started**:
-            • Use \`${process.env.DEFAULT_PREFIX}setnotificationchannel #channel\` to set where stream notifications are sent
-            • Use \`${process.env.DEFAULT_PREFIX}streamstats\` to view your streaming stats
-            • Use \`${process.env.DEFAULT_PREFIX}streamleaderboard\` to see who streams the most
+            • Use \`${process.env.DEFAULT_PREFIX}setnoti #channel\` to set where stream notifications are sent
+            • Use \`${process.env.DEFAULT_PREFIX}stats\` to view your streaming statistics
+            • Use \`${process.env.DEFAULT_PREFIX}leaderboard\` to see who streams the most
+            • Use \`${process.env.DEFAULT_PREFIX}setreport\` to configure automated stream reports
             
-            You can also use slash commands for all features!
+            **Additional Commands**:
+            • \`${process.env.DEFAULT_PREFIX}help\` - View all available commands
+            • \`${process.env.DEFAULT_PREFIX}history\` - Check recent streaming history
+            • \`${process.env.DEFAULT_PREFIX}setprefix\` - Change command prefix
+            
+            All features are also available as slash commands!
           `);
         
         await systemChannel.send({ embeds: [embed] });

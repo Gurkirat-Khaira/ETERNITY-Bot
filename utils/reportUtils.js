@@ -305,18 +305,23 @@ async function generateDailyReport(guildId) {
         const guildConfig = await GuildConfig.findOne({ guildId });
         const timezone = guildConfig?.timezone || 'UTC';
         
-        // Get start of current day in the guild's timezone
+        // Get current time in the guild's timezone
         const now = new Date();
-        const startTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
-        startTime.setHours(0, 0, 0, 0);
         
-        // Get current time in the guild's timezone for the end time
-        const endTime = new Date();
+        // Get start of PREVIOUS day in the guild's timezone
+        const startTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+        startTime.setDate(startTime.getDate() - 1); // Go back 1 day
+        startTime.setHours(0, 0, 0, 0); // Set to start of that day
+        
+        // Get end of PREVIOUS day in the guild's timezone
+        const endTime = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+        endTime.setDate(endTime.getDate() - 1); // Go back 1 day
+        endTime.setHours(23, 59, 59, 999); // Set to end of that day
         
         // Debug logging
-        logger.debug(`Generating daily report for period: ${startTime.toISOString()} to ${endTime.toISOString()} in timezone ${timezone}`, { requestId });
+        logger.debug(`Generating daily report for previous day: ${startTime.toISOString()} to ${endTime.toISOString()} in timezone ${timezone}`, { requestId });
         
-        // Query streams that were active in the current day
+        // Query streams that were active in the previous day
         logger.addRequestStep(requestId, 'querying-database');
         const streamActivities = await StreamActivity.find({
             guildId: guildId,

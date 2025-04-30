@@ -2,6 +2,13 @@
 
 All notable changes to the ETERNITY Stream Tracker bot will be documented in this file.
 
+## [1.1.1] - 2025-04-30
+
+### Fixed
+- Fixed daily reports to show previous day's data instead of current day
+- Updated welcome message with correct command names and additional features
+- Improved report message formatting for clarity
+
 ## [1.1.0] - 2025-04-28
 
 ### Added
@@ -23,7 +30,7 @@ All notable changes to the ETERNITY Stream Tracker bot will be documented in thi
 - Improved error handling for report generation
 - Fixed time calculation in daily report summaries
 
-## [1.0.0] - 2025-04-01
+## [1.0.0] - 2025-04-26
 
 ### Initial Release
 - Stream notification system
