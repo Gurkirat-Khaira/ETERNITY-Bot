@@ -28,7 +28,7 @@ async function generateHourlyReport(guildId, startTime = null) {
         // Debug logging
         logger.debug(`Generating hourly report for period: ${startTime.toISOString()} to ${endTime.toISOString()}`, { requestId });
         
-        // Query streams that were active in the last hour - FIXED to use streams array
+        // Query streams that were active in the last hour
         logger.addRequestStep(requestId, 'querying-database');
         const streamActivities = await StreamActivity.find({
             guildId: guildId,
@@ -37,14 +37,21 @@ async function generateHourlyReport(guildId, startTime = null) {
                     $or: [
                         // Streams that started in the time period
                         { startTime: { $gte: startTime, $lte: endTime } },
-                        // Streams that ended in the time period
-                        { endTime: { $gte: startTime, $lte: endTime } },
+                        // Streams that ended in the time period (only if endTime exists)
+                        { 
+                            endTime: { $exists: true, $ne: null },
+                            endTime: { $gte: startTime, $lte: endTime }
+                        },
                         // Streams that were active through the time period (started before, ended after or still active)
                         { 
                             $and: [
                                 { startTime: { $lte: startTime } },
                                 { $or: [
-                                    { endTime: { $gte: endTime } },
+                                    { 
+                                        endTime: { $exists: true, $ne: null },
+                                        endTime: { $gte: endTime }
+                                    },
+                                    { endTime: { $exists: false } },
                                     { endTime: null }
                                 ]}
                             ]
@@ -55,31 +62,62 @@ async function generateHourlyReport(guildId, startTime = null) {
         });
         
         logger.addRequestStep(requestId, 'processing-streams');
-        // Extract relevant streams from each activity
-        const streams = [];
+        // Extract and process relevant streams from each activity
+        const processedStreams = [];
+        const userStreamCounts = new Map(); // Track streams per user to detect overlaps
+        
         for (const activity of streamActivities) {
+            const userId = activity.userId;
+            
+            // Initialize user stream count tracking
+            if (!userStreamCounts.has(userId)) {
+                userStreamCounts.set(userId, new Set());
+            }
+            
             for (const stream of activity.streams) {
                 // Check if the stream was active during the time period
-                if ((stream.startTime >= startTime && stream.startTime <= endTime) ||
-                    (stream.endTime && stream.endTime >= startTime && stream.endTime <= endTime) ||
-                    (stream.startTime <= startTime && (!stream.endTime || stream.endTime >= endTime))) {
-                    streams.push({
+                const streamStartInPeriod = stream.startTime >= startTime && stream.startTime <= endTime;
+                const streamEndInPeriod = stream.endTime && stream.endTime >= startTime && stream.endTime <= endTime;
+                const streamSpansPeriod = stream.startTime <= startTime && (!stream.endTime || stream.endTime >= endTime);
+                
+                if (streamStartInPeriod || streamEndInPeriod || streamSpansPeriod) {
+                    // Create a unique identifier for this stream to detect duplicates
+                    const streamId = `${stream.startTime.getTime()}-${stream.channelId}`;
+                    
+                    // Skip if we've already processed this exact stream for this user
+                    if (userStreamCounts.get(userId).has(streamId)) {
+                        logger.debug(`Skipping duplicate stream for user ${userId}: ${streamId}`, { requestId });
+                        continue;
+                    }
+                    
+                    userStreamCounts.get(userId).add(streamId);
+                    
+                    // Determine if this is an incomplete/ongoing stream
+                    const isIncomplete = !stream.endTime || stream.endTime === 'Unknown';
+                    
+                    processedStreams.push({
                         userId: activity.userId,
                         username: activity.username,
                         startTime: stream.startTime,
                         endTime: stream.endTime,
                         channelId: stream.channelId,
                         channelName: stream.channelName,
-                        interrupted: stream.interrupted || false
+                        interrupted: stream.interrupted || false,
+                        isIncomplete: isIncomplete,
+                        duration: stream.duration || 0
                     });
                 }
             }
         }
         
         // Sort streams by start time (newest first)
-        streams.sort((a, b) => b.startTime - a.startTime);
+        processedStreams.sort((a, b) => b.startTime - a.startTime);
         
-        logger.debug(`Found ${streams.length} streams for hourly report`, { requestId, streamCount: streams.length });
+        logger.debug(`Found ${processedStreams.length} streams for hourly report (after deduplication)`, { 
+            requestId, 
+            streamCount: processedStreams.length,
+            incompleteCount: processedStreams.filter(s => s.isIncomplete).length
+        });
         
         // Create base embed that all pages will extend
         const baseEmbed = new EmbedBuilder()
@@ -89,35 +127,50 @@ async function generateHourlyReport(guildId, startTime = null) {
             .setTimestamp();
         
         // If no streams, return a single embed
-        if (streams.length === 0) {
+        if (processedStreams.length === 0) {
             baseEmbed.addFields([{ name: 'No Streams', value: 'No streaming activity in the past hour.' }]);
             logger.endRequest(requestId, true, { pages: 1 });
             return [baseEmbed];
         }
         
-        // Group streams by user
+        // Group streams by user and calculate statistics
         const userStreams = {};
         let totalStreamTime = 0;
         let totalStreamCount = 0;
+        let incompleteStreamCount = 0;
         
-        streams.forEach(stream => {
+        processedStreams.forEach(stream => {
             const userId = stream.userId;
             if (!userStreams[userId]) {
                 userStreams[userId] = {
                     username: stream.username,
                     streamCount: 0,
                     totalDuration: 0,
+                    incompleteCount: 0,
                     streams: []
                 };
             }
             
             // Calculate duration within the report period
-            const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
-            const streamEnd = stream.endTime && stream.endTime < endTime ? stream.endTime : endTime;
+            let durationSec = 0;
             
-            // Calculate duration in milliseconds, then convert to seconds for formatDuration
-            const durationMs = Math.max(0, (streamEnd - streamStart));
-            const durationSec = Math.round(durationMs / 1000); // Round to nearest second
+            if (stream.isIncomplete) {
+                // For incomplete streams, calculate duration from start to end of report period
+                const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
+                const streamEnd = endTime; // Use end of report period for ongoing streams
+                durationSec = Math.max(0, Math.round((streamEnd - streamStart) / 1000));
+                incompleteStreamCount++;
+                userStreams[userId].incompleteCount++;
+            } else {
+                // For complete streams, use actual duration or calculate within period
+                if (stream.duration && stream.duration > 0) {
+                    durationSec = stream.duration * 60; // Convert minutes to seconds
+                } else {
+                    const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
+                    const streamEnd = stream.endTime && stream.endTime < endTime ? stream.endTime : endTime;
+                    durationSec = Math.max(0, Math.round((streamEnd - streamStart) / 1000));
+                }
+            }
             
             userStreams[userId].streamCount++;
             userStreams[userId].totalDuration += durationSec;
@@ -127,7 +180,8 @@ async function generateHourlyReport(guildId, startTime = null) {
                 startTime: stream.startTime,
                 endTime: stream.endTime,
                 duration: durationSec,
-                interrupted: stream.interrupted
+                interrupted: stream.interrupted,
+                isIncomplete: stream.isIncomplete
             });
             
             totalStreamTime += durationSec;
@@ -138,6 +192,8 @@ async function generateHourlyReport(guildId, startTime = null) {
         const summaryField = { 
             name: 'Summary', 
             value: `**Total Streams:** ${totalStreamCount}\n` + 
+                   `**Complete Streams:** ${totalStreamCount - incompleteStreamCount}\n` +
+                   `**Ongoing/Unknown Streams:** ${incompleteStreamCount}\n` +
                    `**Total Streaming Time:** ${formatDuration(totalStreamTime)}\n` +
                    `**Unique Streamers:** ${Object.keys(userStreams).length}`
         };
@@ -154,7 +210,8 @@ async function generateHourlyReport(guildId, startTime = null) {
                 type: 'user-header',
                 username: user.username,
                 streamCount: user.streamCount,
-                totalDuration: user.totalDuration
+                totalDuration: user.totalDuration,
+                incompleteCount: user.incompleteCount
             });
             
             // Add each stream from this user
@@ -190,9 +247,11 @@ async function generateHourlyReport(guildId, startTime = null) {
                 // If we have a current embed, finish and add it
                 if (currentEmbed && currentUserContent) {
                     // Add the last user content if any
+                    const user = userStreams[currentUserId];
+                    const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
                     currentEmbed.addFields([{ 
-                        name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                        value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                        name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                        value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
                     }]);
                     
                     embeds.push(currentEmbed);
@@ -224,9 +283,11 @@ async function generateHourlyReport(guildId, startTime = null) {
             if (entry.type === 'user-header') {
                 // If we were processing a different user, add their field first
                 if (currentUserId !== null && currentUserContent) {
+                    const user = userStreams[currentUserId];
+                    const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
                     currentEmbed.addFields([{ 
-                        name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                        value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                        name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                        value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
                     }]);
                     
                     currentUserContent = '';
@@ -238,8 +299,6 @@ async function generateHourlyReport(guildId, startTime = null) {
             } else if (entry.type === 'stream') {
                 // Add stream details to the current user's content
                 const stream = entry.stream;
-                const status = stream.endTime ? 'Ended' : 'Still Live';
-                const interruptedText = stream.interrupted ? ' (Interrupted)' : '';
                 
                 // Format timestamps for readability
                 const startTimeStr = stream.startTime.toLocaleTimeString([], {
@@ -248,17 +307,29 @@ async function generateHourlyReport(guildId, startTime = null) {
                     second: '2-digit',
                     hour12: true
                 });
-                const endTimeStr = stream.endTime ? stream.endTime.toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true
-                }) : 'Now';
+                
+                let endTimeStr, statusText;
+                if (stream.isIncomplete) {
+                    endTimeStr = 'Unknown';
+                    statusText = 'Status: Ongoing/Unknown';
+                } else if (stream.endTime) {
+                    endTimeStr = stream.endTime.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                    });
+                    statusText = stream.interrupted ? 'Status: Interrupted' : 'Status: Completed';
+                } else {
+                    endTimeStr = 'Now';
+                    statusText = 'Status: Still streaming';
+                }
                 
                 currentUserContent += `• <#${stream.channelId}> (${stream.channelName})\n`;
                 currentUserContent += `  • Started: ${startTimeStr}\n`;
-                currentUserContent += `  • ${stream.endTime ? 'Ended: ' + endTimeStr : 'Still streaming'}\n`;
-                currentUserContent += `  • Duration: ${formatDuration(stream.duration)}${interruptedText}\n\n`;
+                currentUserContent += `  • Ended: ${endTimeStr}\n`;
+                currentUserContent += `  • Duration: ${formatDuration(stream.duration)}\n`;
+                currentUserContent += `  • ${statusText}\n\n`;
                 
                 // Increment the stream counter for the current page
                 streamsOnCurrentPage++;
@@ -267,15 +338,22 @@ async function generateHourlyReport(guildId, startTime = null) {
         
         // Add the last user and embed if not already added
         if (currentEmbed && currentUserContent) {
+            const user = userStreams[currentUserId];
+            const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
             currentEmbed.addFields([{ 
-                name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
             }]);
             
             embeds.push(currentEmbed);
         }
         
-        logger.endRequest(requestId, true, { streams: totalStreamCount, users: Object.keys(userStreams).length, pages: embeds.length });
+        logger.endRequest(requestId, true, { 
+            streams: totalStreamCount, 
+            users: Object.keys(userStreams).length, 
+            pages: embeds.length,
+            incompleteStreams: incompleteStreamCount
+        });
         return embeds;
     } catch (error) {
         logger.error('Error generating hourly report:', { error: error.message, stack: error.stack });
@@ -330,14 +408,21 @@ async function generateDailyReport(guildId) {
                     $or: [
                         // Streams that started in the time period
                         { startTime: { $gte: startTime, $lte: endTime } },
-                        // Streams that ended in the time period
-                        { endTime: { $gte: startTime, $lte: endTime } },
+                        // Streams that ended in the time period (only if endTime exists)
+                        { 
+                            endTime: { $exists: true, $ne: null },
+                            endTime: { $gte: startTime, $lte: endTime }
+                        },
                         // Streams that were active through the time period (started before, ended after or still active)
                         { 
                             $and: [
                                 { startTime: { $lte: startTime } },
                                 { $or: [
-                                    { endTime: { $gte: endTime } },
+                                    { 
+                                        endTime: { $exists: true, $ne: null },
+                                        endTime: { $gte: endTime }
+                                    },
+                                    { endTime: { $exists: false } },
                                     { endTime: null }
                                 ]}
                             ]
@@ -348,31 +433,62 @@ async function generateDailyReport(guildId) {
         });
         
         logger.addRequestStep(requestId, 'processing-streams');
-        // Extract relevant streams from each activity
-        const streams = [];
+        // Extract and process relevant streams from each activity
+        const processedStreams = [];
+        const userStreamCounts = new Map(); // Track streams per user to detect overlaps
+        
         for (const activity of streamActivities) {
+            const userId = activity.userId;
+            
+            // Initialize user stream count tracking
+            if (!userStreamCounts.has(userId)) {
+                userStreamCounts.set(userId, new Set());
+            }
+            
             for (const stream of activity.streams) {
                 // Check if the stream was active during the time period
-                if ((stream.startTime >= startTime && stream.startTime <= endTime) ||
-                    (stream.endTime && stream.endTime >= startTime && stream.endTime <= endTime) ||
-                    (stream.startTime <= startTime && (!stream.endTime || stream.endTime >= endTime))) {
-                    streams.push({
+                const streamStartInPeriod = stream.startTime >= startTime && stream.startTime <= endTime;
+                const streamEndInPeriod = stream.endTime && stream.endTime >= startTime && stream.endTime <= endTime;
+                const streamSpansPeriod = stream.startTime <= startTime && (!stream.endTime || stream.endTime >= endTime);
+                
+                if (streamStartInPeriod || streamEndInPeriod || streamSpansPeriod) {
+                    // Create a unique identifier for this stream to detect duplicates
+                    const streamId = `${stream.startTime.getTime()}-${stream.channelId}`;
+                    
+                    // Skip if we've already processed this exact stream for this user
+                    if (userStreamCounts.get(userId).has(streamId)) {
+                        logger.debug(`Skipping duplicate stream for user ${userId}: ${streamId}`, { requestId });
+                        continue;
+                    }
+                    
+                    userStreamCounts.get(userId).add(streamId);
+                    
+                    // Determine if this is an incomplete/ongoing stream
+                    const isIncomplete = !stream.endTime || stream.endTime === 'Unknown';
+                    
+                    processedStreams.push({
                         userId: activity.userId,
                         username: activity.username,
                         startTime: stream.startTime,
                         endTime: stream.endTime,
                         channelId: stream.channelId,
                         channelName: stream.channelName,
-                        interrupted: stream.interrupted || false
+                        interrupted: stream.interrupted || false,
+                        isIncomplete: isIncomplete,
+                        duration: stream.duration || 0
                     });
                 }
             }
         }
         
         // Sort streams by start time (newest first)
-        streams.sort((a, b) => b.startTime - a.startTime);
+        processedStreams.sort((a, b) => b.startTime - a.startTime);
         
-        logger.debug(`Found ${streams.length} streams for daily report`, { requestId, streamCount: streams.length });
+        logger.debug(`Found ${processedStreams.length} streams for daily report (after deduplication)`, { 
+            requestId, 
+            streamCount: processedStreams.length,
+            incompleteCount: processedStreams.filter(s => s.isIncomplete).length
+        });
         
         const dateStr = startTime.toLocaleDateString('en-US', { timeZone: timezone });
         
@@ -384,35 +500,50 @@ async function generateDailyReport(guildId) {
             .setTimestamp();
         
         // If no streams, return a single embed
-        if (streams.length === 0) {
+        if (processedStreams.length === 0) {
             baseEmbed.addFields([{ name: 'No Streams', value: `No streaming activity on ${dateStr}.` }]);
             logger.endRequest(requestId, true, { pages: 1 });
             return [baseEmbed];
         }
         
-        // Group streams by user
+        // Group streams by user and calculate statistics
         const userStreams = {};
         let totalStreamTime = 0;
         let totalStreamCount = 0;
+        let incompleteStreamCount = 0;
         
-        streams.forEach(stream => {
+        processedStreams.forEach(stream => {
             const userId = stream.userId;
             if (!userStreams[userId]) {
                 userStreams[userId] = {
                     username: stream.username,
                     streamCount: 0,
                     totalDuration: 0,
+                    incompleteCount: 0,
                     streams: []
                 };
             }
             
             // Calculate duration within the report period
-            const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
-            const streamEnd = stream.endTime && stream.endTime < endTime ? stream.endTime : endTime;
+            let durationSec = 0;
             
-            // Calculate duration in milliseconds, then convert to seconds for formatDuration
-            const durationMs = Math.max(0, (streamEnd - streamStart));
-            const durationSec = Math.round(durationMs / 1000); // Round to nearest second
+            if (stream.isIncomplete) {
+                // For incomplete streams, calculate duration from start to end of report period
+                const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
+                const streamEnd = endTime; // Use end of report period for ongoing streams
+                durationSec = Math.max(0, Math.round((streamEnd - streamStart) / 1000));
+                incompleteStreamCount++;
+                userStreams[userId].incompleteCount++;
+            } else {
+                // For complete streams, use actual duration or calculate within period
+                if (stream.duration && stream.duration > 0) {
+                    durationSec = stream.duration * 60; // Convert minutes to seconds
+                } else {
+                    const streamStart = stream.startTime > startTime ? stream.startTime : startTime;
+                    const streamEnd = stream.endTime && stream.endTime < endTime ? stream.endTime : endTime;
+                    durationSec = Math.max(0, Math.round((streamEnd - streamStart) / 1000));
+                }
+            }
             
             userStreams[userId].streamCount++;
             userStreams[userId].totalDuration += durationSec;
@@ -422,7 +553,8 @@ async function generateDailyReport(guildId) {
                 startTime: stream.startTime,
                 endTime: stream.endTime,
                 duration: durationSec,
-                interrupted: stream.interrupted
+                interrupted: stream.interrupted,
+                isIncomplete: stream.isIncomplete
             });
             
             totalStreamTime += durationSec;
@@ -433,6 +565,8 @@ async function generateDailyReport(guildId) {
         const summaryField = { 
             name: 'Summary', 
             value: `**Total Streams:** ${totalStreamCount}\n` + 
+                   `**Complete Streams:** ${totalStreamCount - incompleteStreamCount}\n` +
+                   `**Ongoing/Unknown Streams:** ${incompleteStreamCount}\n` +
                    `**Total Streaming Time:** ${formatDuration(totalStreamTime)}\n` +
                    `**Unique Streamers:** ${Object.keys(userStreams).length}`
         };
@@ -454,7 +588,8 @@ async function generateDailyReport(guildId) {
                 type: 'user-header',
                 username: user.username,
                 streamCount: user.streamCount,
-                totalDuration: user.totalDuration
+                totalDuration: user.totalDuration,
+                incompleteCount: user.incompleteCount
             });
             
             // Add each stream from this user
@@ -490,9 +625,11 @@ async function generateDailyReport(guildId) {
                 // If we have a current embed, finish and add it
                 if (currentEmbed && currentUserContent) {
                     // Add the last user content if any
+                    const user = userStreams[currentUserId];
+                    const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
                     currentEmbed.addFields([{ 
-                        name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                        value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                        name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                        value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
                     }]);
                     
                     embeds.push(currentEmbed);
@@ -524,9 +661,11 @@ async function generateDailyReport(guildId) {
             if (entry.type === 'user-header') {
                 // If we were processing a different user, add their field first
                 if (currentUserId !== null && currentUserContent) {
+                    const user = userStreams[currentUserId];
+                    const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
                     currentEmbed.addFields([{ 
-                        name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                        value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                        name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                        value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
                     }]);
                     
                     currentUserContent = '';
@@ -538,8 +677,6 @@ async function generateDailyReport(guildId) {
             } else if (entry.type === 'stream') {
                 // Add stream details to the current user's content
                 const stream = entry.stream;
-                const status = stream.endTime ? 'Ended' : 'Still Live';
-                const interruptedText = stream.interrupted ? ' (Interrupted)' : '';
                 
                 // Format timestamps for readability
                 const startTimeStr = stream.startTime.toLocaleTimeString([], {
@@ -548,17 +685,29 @@ async function generateDailyReport(guildId) {
                     second: '2-digit',
                     hour12: true
                 });
-                const endTimeStr = stream.endTime ? stream.endTime.toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true
-                }) : 'Now';
+                
+                let endTimeStr, statusText;
+                if (stream.isIncomplete) {
+                    endTimeStr = 'Unknown';
+                    statusText = 'Status: Ongoing/Unknown';
+                } else if (stream.endTime) {
+                    endTimeStr = stream.endTime.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                    });
+                    statusText = stream.interrupted ? 'Status: Interrupted' : 'Status: Completed';
+                } else {
+                    endTimeStr = 'Now';
+                    statusText = 'Status: Still streaming';
+                }
                 
                 currentUserContent += `• <#${stream.channelId}> (${stream.channelName})\n`;
                 currentUserContent += `  • Started: ${startTimeStr}\n`;
-                currentUserContent += `  • ${stream.endTime ? 'Ended: ' + endTimeStr : 'Still streaming'}\n`;
-                currentUserContent += `  • Duration: ${formatDuration(stream.duration)}${interruptedText}\n\n`;
+                currentUserContent += `  • Ended: ${endTimeStr}\n`;
+                currentUserContent += `  • Duration: ${formatDuration(stream.duration)}\n`;
+                currentUserContent += `  • ${statusText}\n\n`;
                 
                 // Increment the stream counter for the current page
                 streamsOnCurrentPage++;
@@ -567,15 +716,22 @@ async function generateDailyReport(guildId) {
         
         // Add the last user and embed if not already added
         if (currentEmbed && currentUserContent) {
+            const user = userStreams[currentUserId];
+            const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
             currentEmbed.addFields([{ 
-                name: `${userStreams[currentUserId].username} (${userStreams[currentUserId].streamCount} stream${userStreams[currentUserId].streamCount !== 1 ? 's' : ''})`,
-                value: `**Total Time:** ${formatDuration(userStreams[currentUserId].totalDuration)}\n${currentUserContent}`
+                name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
+                value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
             }]);
             
             embeds.push(currentEmbed);
         }
         
-        logger.endRequest(requestId, true, { streams: totalStreamCount, users: Object.keys(userStreams).length, pages: embeds.length });
+        logger.endRequest(requestId, true, { 
+            streams: totalStreamCount, 
+            users: Object.keys(userStreams).length, 
+            pages: embeds.length,
+            incompleteStreams: incompleteStreamCount
+        });
         return embeds;
     } catch (error) {
         logger.error('Error generating daily report:', { error: error.message, stack: error.stack });
