@@ -223,8 +223,8 @@ async function generateHourlyReport(guildId, startTime = null) {
             });
         });
         
-        // Calculate number of pages needed
-        const pageCount = Math.ceil(totalStreamCount / MAX_STREAMS_PER_PAGE);
+        // We'll calculate the actual page count as we create pages
+        let estimatedPageCount = Math.ceil(totalStreamCount / MAX_STREAMS_PER_PAGE);
         
         logger.addRequestStep(requestId, 'creating-pages', { pageCount, totalStreams: totalStreamCount });
         
@@ -268,8 +268,9 @@ async function generateHourlyReport(guildId, startTime = null) {
                 currentEmbed.addFields([summaryField]);
                 
                 // Add page indicator to title if multiple pages
-                if (pageCount > 1) {
-                    currentEmbed.setTitle(`📊 Hourly Stream Report (Page ${currentPage+1}/${pageCount})`);
+                if (estimatedPageCount > 1) {
+                    // We'll update this later with the actual page count
+                    currentEmbed.setTitle(`📊 Hourly Stream Report (Page ${currentPage+1})`);
                 }
                 
                 // Reset counters for the new page
@@ -348,10 +349,18 @@ async function generateHourlyReport(guildId, startTime = null) {
             embeds.push(currentEmbed);
         }
         
+        // Now update all embeds with the correct page count
+        const actualPageCount = embeds.length;
+        if (actualPageCount > 1) {
+            embeds.forEach((embed, index) => {
+                embed.setTitle(`📊 Hourly Stream Report (Page ${index + 1}/${actualPageCount})`);
+            });
+        }
+        
         logger.endRequest(requestId, true, { 
             streams: totalStreamCount, 
             users: Object.keys(userStreams).length, 
-            pages: embeds.length,
+            pages: actualPageCount,
             incompleteStreams: incompleteStreamCount
         });
         return embeds;
@@ -601,8 +610,8 @@ async function generateDailyReport(guildId) {
             });
         });
         
-        // Calculate number of pages needed
-        const pageCount = Math.ceil(totalStreamCount / MAX_STREAMS_PER_PAGE);
+        // We'll calculate the actual page count as we create pages
+        let estimatedPageCount = Math.ceil(totalStreamCount / MAX_STREAMS_PER_PAGE);
         
         logger.addRequestStep(requestId, 'creating-pages', { pageCount, totalStreams: totalStreamCount });
         
@@ -646,8 +655,9 @@ async function generateDailyReport(guildId) {
                 currentEmbed.addFields([summaryField]);
                 
                 // Add page indicator to title if multiple pages
-                if (pageCount > 1) {
-                    currentEmbed.setTitle(`📈 Daily Stream Report (Page ${currentPage+1}/${pageCount})`);
+                if (estimatedPageCount > 1) {
+                    // We'll update this later with the actual page count
+                    currentEmbed.setTitle(`📈 Daily Stream Report (Page ${currentPage+1})`);
                 }
                 
                 // Reset counters for the new page
@@ -717,48 +727,4 @@ async function generateDailyReport(guildId) {
         // Add the last user and embed if not already added
         if (currentEmbed && currentUserContent) {
             const user = userStreams[currentUserId];
-            const incompleteText = user.incompleteCount > 0 ? ` (${user.incompleteCount} ongoing/unknown)` : '';
-            currentEmbed.addFields([{ 
-                name: `${user.username} (${user.streamCount} stream${user.streamCount !== 1 ? 's' : ''}${incompleteText})`,
-                value: `**Total Time:** ${formatDuration(user.totalDuration)}\n${currentUserContent}`
-            }]);
-            
-            embeds.push(currentEmbed);
-        }
-        
-        logger.endRequest(requestId, true, { 
-            streams: totalStreamCount, 
-            users: Object.keys(userStreams).length, 
-            pages: embeds.length,
-            incompleteStreams: incompleteStreamCount
-        });
-        return embeds;
-    } catch (error) {
-        logger.error('Error generating daily report:', { error: error.message, stack: error.stack });
-        
-        // Return a basic error embed
-        const errorEmbed = new EmbedBuilder()
-            .setTitle('⚠️ Error Generating Report')
-            .setColor('#ff0000')
-            .setDescription(`An error occurred while generating the stream report: ${error.message}`)
-            .setTimestamp();
-        
-        return [errorEmbed];
-    }
-}
-
-/**
- * Send a report to a channel with pagination support
- * @param {Object} interaction - Discord interaction object
- * @param {Array<EmbedBuilder>} reportEmbeds - Array of report embeds
- * @param {boolean} ephemeral - Whether the message should be ephemeral
- */
-async function sendReportWithPagination(interaction, reportEmbeds, ephemeral = false) {
-    await createPaginatedEmbed(interaction, reportEmbeds, ephemeral);
-}
-
-module.exports = {
-    generateHourlyReport,
-    generateDailyReport,
-    sendReportWithPagination
-};
+            const incompl
